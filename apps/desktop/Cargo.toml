@@ -1,0 +1,11 @@
+[package]
+name = "desktop"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serial-core = { path = "../../crates/serial-core" }
+protocol-core = { path = "../../crates/protocol-core" }
+task-engine = { path = "../../crates/task-engine" }
+project-store = { path = "../../crates/project-store" }
+gateway-client = { path = "../../crates/gateway-client" }

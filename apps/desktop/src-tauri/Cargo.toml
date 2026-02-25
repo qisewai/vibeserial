@@ -1,0 +1,17 @@
+[package]
+name = "vibeserial-tauri"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+serial-core = { path = "../../../crates/serial-core" }
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -1,0 +1,8 @@
+/target
+apps/desktop/src-tauri/target
+.DS_Store
+*.log
+*.tmp
+apps/ui/node_modules
+apps/ui/dist
+.vibeserial
