@@ -368,20 +368,19 @@ function onEditorPaste(event: ClipboardEvent) {
 
 <style scoped>
 .hex-editor {
-  border: 1px solid #9fb0c3;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #a0a0a0;
+  border-radius: 0;
+  background: #ffffff;
   padding: 8px;
   min-height: 220px;
   overflow: auto;
   outline: none;
   font-family: "JetBrains Mono", "Fira Code", monospace;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .hex-editor:focus {
-  border-color: #2458b6;
-  box-shadow: 0 0 0 2px rgba(36, 88, 182, 0.16);
+  border-color: #0060c0;
 }
 
 .row {
@@ -429,7 +428,7 @@ function onEditorPaste(event: ClipboardEvent) {
 
 .nibble.active {
   color: #fff;
-  background: #2458b6;
+  background: #0060c0;
 }
 
 .ascii {

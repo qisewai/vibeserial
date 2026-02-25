@@ -1,19 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import HexByteEditor from "./components/HexByteEditor.vue";
-
-type SessionState = {
-  sessionId: string;
-  endpoint: string;
-  baudRate: number;
-  dataBits: number;
-  stopBits: number;
-  parity: string;
-  flowControl: string;
-  connected: boolean;
-  reconnectCount: number;
-};
 
 const HEX_MAX_BYTES = 4096;
 
@@ -23,10 +11,10 @@ const infoText = ref("等待操作");
 const isTauriRuntime = "__TAURI_INTERNALS__" in window;
 
 const ports = ref<string[]>([]);
-const sessions = ref<SessionState[]>([]);
+const connected = ref(false);
 
 // 串口参数
-const sessionId = ref("session-main");
+const sessionId = "session-main";
 const endpoint = ref("loopback");
 const baudRate = ref(115200);
 const dataBits = ref(8);
@@ -41,10 +29,6 @@ const sendBytes = ref<number[]>(asciiToBytes(sendAsciiEditor.value));
 // 接收区：左 ASCII，右 HEX（自定义字节编辑控件）
 const receiveAsciiEditor = ref("");
 const receiveBytes = ref<number[]>([]);
-
-const activeSession = computed(() =>
-  sessions.value.find((s) => s.sessionId === sessionId.value),
-);
 
 let syncingSend = false;
 let syncingReceive = false;
@@ -97,18 +81,15 @@ async function loadPorts() {
   });
 }
 
-async function refreshSessions() {
-  await runAction(async () => {
-    sessions.value = await invoke<SessionState[]>("serial_list_sessions");
-    infoText.value = `当前会话数 ${sessions.value.length}`;
-  });
-}
+onMounted(() => {
+  loadPorts();
+});
 
 async function openSession() {
   await runAction(async () => {
     await invoke("serial_open", {
       req: {
-        sessionId: sessionId.value,
+        sessionId,
         endpoint: endpoint.value,
         baudRate: Number(baudRate.value),
         dataBits: Number(dataBits.value),
@@ -118,16 +99,16 @@ async function openSession() {
       },
     });
 
+    connected.value = true;
     infoText.value = "串口已打开";
-    await refreshSessions();
   });
 }
 
 async function closeSession() {
   await runAction(async () => {
-    await invoke("serial_close", { sessionId: sessionId.value });
+    await invoke("serial_close", { sessionId });
+    connected.value = false;
     infoText.value = "串口已关闭";
-    await refreshSessions();
   });
 }
 
@@ -139,7 +120,7 @@ async function sendData() {
 
     await invoke("serial_send", {
       req: {
-        sessionId: sessionId.value,
+        sessionId,
         hexPayload: toHexPayload(sendBytes.value),
       },
     });
@@ -150,7 +131,7 @@ async function sendData() {
 async function receiveData() {
   await runAction(async () => {
     const hex = await invoke<string>("serial_receive", {
-      sessionId: sessionId.value,
+      sessionId,
     });
 
     const bytes = parseHexPayloadString(hex);
@@ -170,7 +151,7 @@ async function pushReceiveToInbound() {
     }
 
     await invoke("serial_mock_push_inbound", {
-      sessionId: sessionId.value,
+      sessionId,
       hexPayload: toHexPayload(receiveBytes.value),
     });
     infoText.value = `已将接收区 ${receiveBytes.value.length} 字节写入缓冲`;
@@ -296,324 +277,403 @@ function toHexPayload(bytes: number[]): string {
 </script>
 
 <template>
-  <main class="page">
-    <section class="hero">
-      <h1>VibeSerial 串口收发</h1>
-      <p>左侧 ASCII，右侧 HEX（自定义字节控件，固定 `00 00 00` 格式）。</p>
-      <div class="status-row">
-        <span class="chip">状态: {{ infoText }}</span>
-        <span v-if="activeSession" class="chip ok"
-          >当前会话: {{ activeSession.sessionId }}</span
-        >
+  <div class="app">
+    <!-- 菜单栏 -->
+    <div class="menubar">
+      <span class="menu-item">文件</span>
+      <span class="menu-item">视图</span>
+      <span class="menu-item">帮助</span>
+    </div>
+
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <button :disabled="isBusy" @click="openSession">打开</button>
+      <button :disabled="isBusy" @click="closeSession">关闭</button>
+      <span class="toolbar-sep"></span>
+      <button :disabled="isBusy" @click="sendData">发送</button>
+      <button :disabled="isBusy" @click="receiveData">接收</button>
+    </div>
+
+    <!-- 主体：侧边栏 + 内容区 -->
+    <div class="main-body">
+      <!-- 侧边栏：串口参数 -->
+      <div class="sidebar">
+        <fieldset>
+          <legend>串口参数</legend>
+
+          <label>串口端点</label>
+          <input v-model="endpoint" list="port-list" />
+          <datalist id="port-list">
+            <option v-for="port in ports" :key="port" :value="port" />
+          </datalist>
+
+          <label>波特率</label>
+          <input v-model.number="baudRate" type="number" min="1200" step="1200" />
+
+          <label>数据位</label>
+          <select v-model.number="dataBits">
+            <option :value="5">5</option>
+            <option :value="6">6</option>
+            <option :value="7">7</option>
+            <option :value="8">8</option>
+          </select>
+
+          <label>停止位</label>
+          <select v-model.number="stopBits">
+            <option :value="1">1</option>
+            <option :value="2">2</option>
+          </select>
+
+          <label>校验位</label>
+          <select v-model="parity">
+            <option value="none">None</option>
+            <option value="odd">Odd</option>
+            <option value="even">Even</option>
+          </select>
+
+          <label>流控</label>
+          <select v-model="flowControl">
+            <option value="none">None</option>
+            <option value="software">Software</option>
+            <option value="hardware">Hardware</option>
+          </select>
+        </fieldset>
+
       </div>
-      <p v-if="errorText" class="error">{{ errorText }}</p>
-    </section>
 
-    <section class="layout">
-      <article class="panel">
-        <h2>串口参数</h2>
-        <div class="row">
-          <button :disabled="isBusy" @click="loadPorts">枚举串口</button>
-          <button :disabled="isBusy" @click="refreshSessions">刷新会话</button>
-        </div>
-
-        <label>会话 ID</label>
-        <input v-model="sessionId" />
-
-        <label>串口端点</label>
-        <input v-model="endpoint" list="port-list" />
-        <datalist id="port-list">
-          <option v-for="port in ports" :key="port" :value="port" />
-        </datalist>
-
-        <label>波特率</label>
-        <input v-model.number="baudRate" type="number" min="1200" step="1200" />
-
-        <div class="row split">
-          <div>
-            <label>数据位</label>
-            <select v-model.number="dataBits">
-              <option :value="5">5</option>
-              <option :value="6">6</option>
-              <option :value="7">7</option>
-              <option :value="8">8</option>
-            </select>
+      <!-- 内容区：接收区(上) + 发送区(下) -->
+      <div class="content">
+        <!-- 接收区 -->
+        <fieldset class="zone zone-recv">
+          <legend>接收区</legend>
+          <div class="zone-toolbar">
+            <button :disabled="isBusy" @click="receiveData">读取</button>
+            <button :disabled="isBusy" @click="clearReceiveEditors">清空</button>
+            <button :disabled="isBusy" @click="pushReceiveToInbound">写入缓冲</button>
+            <button :disabled="isBusy" @click="copyReceiveToSend">复制到发送区</button>
           </div>
-          <div>
-            <label>停止位</label>
-            <select v-model.number="stopBits">
-              <option :value="1">1</option>
-              <option :value="2">2</option>
-            </select>
+          <div class="editors-grid">
+            <div class="editor-col">
+              <label>ASCII</label>
+              <textarea
+                v-model="receiveAsciiEditor"
+                class="editor ascii"
+                @input="onReceiveAsciiInput"
+                placeholder="ASCII 显示区"
+              />
+            </div>
+            <div class="editor-col">
+              <label>HEX <span class="hint">{{ receiveBytes.length }}/{{ HEX_MAX_BYTES }}</span></label>
+              <HexByteEditor
+                v-model="receiveBytes"
+                :max-bytes="HEX_MAX_BYTES"
+                :disabled="isBusy"
+              />
+            </div>
           </div>
-          <div>
-            <label>校验位</label>
-            <select v-model="parity">
-              <option value="none">None</option>
-              <option value="odd">Odd</option>
-              <option value="even">Even</option>
-            </select>
+        </fieldset>
+
+        <!-- 发送区 -->
+        <fieldset class="zone zone-send">
+          <legend>发送区</legend>
+          <div class="zone-toolbar">
+            <button :disabled="isBusy" @click="sendData">发送</button>
+            <button :disabled="isBusy" @click="clearSendEditors">清空</button>
           </div>
-          <div>
-            <label>流控</label>
-            <select v-model="flowControl">
-              <option value="none">None</option>
-              <option value="software">Software</option>
-              <option value="hardware">Hardware</option>
-            </select>
+          <div class="editors-grid">
+            <div class="editor-col">
+              <label>ASCII</label>
+              <textarea
+                v-model="sendAsciiEditor"
+                class="editor ascii"
+                @input="onSendAsciiInput"
+                placeholder="在这里输入 ASCII"
+              />
+            </div>
+            <div class="editor-col">
+              <label>HEX <span class="hint">{{ sendBytes.length }}/{{ HEX_MAX_BYTES }}</span></label>
+              <HexByteEditor v-model="sendBytes" :max-bytes="HEX_MAX_BYTES" :disabled="isBusy" />
+            </div>
           </div>
-        </div>
+        </fieldset>
+      </div>
+    </div>
 
-        <div class="row">
-          <button :disabled="isBusy" @click="openSession">打开串口</button>
-          <button :disabled="isBusy" @click="closeSession">关闭串口</button>
-        </div>
-
-        <ul class="list">
-          <li v-for="s in sessions" :key="s.sessionId">
-            <b>{{ s.sessionId }}</b>
-            <span>{{ s.endpoint }}</span>
-            <span>{{ s.connected ? "已连接" : "未连接" }}</span>
-            <span>{{ s.baudRate }}/{{ s.dataBits }}/{{ s.stopBits }}</span>
-            <span>{{ s.parity }} / {{ s.flowControl }}</span>
-          </li>
-        </ul>
-      </article>
-
-      <article class="panel editor-panel">
-        <h2>发送区</h2>
-        <div class="row">
-          <button :disabled="isBusy" @click="clearSendEditors">清空</button>
-          <button :disabled="isBusy" @click="sendData">发送</button>
-        </div>
-
-        <div class="editors-grid">
-          <div>
-            <label>ASCII（可编辑）</label>
-            <textarea
-              v-model="sendAsciiEditor"
-              class="editor ascii"
-              rows="12"
-              @input="onSendAsciiInput"
-              placeholder="在这里输入 ASCII，右侧 HEX 会同步"
-            />
-          </div>
-          <div>
-            <label>HEX（字节控件）</label>
-            <HexByteEditor v-model="sendBytes" :max-bytes="HEX_MAX_BYTES" :disabled="isBusy" />
-            <p class="hint">字节数: {{ sendBytes.length }}/{{ HEX_MAX_BYTES }}</p>
-          </div>
-        </div>
-      </article>
-
-      <article class="panel editor-panel">
-        <h2>接收区</h2>
-        <div class="row">
-          <button :disabled="isBusy" @click="receiveData">读取串口</button>
-          <button :disabled="isBusy" @click="clearReceiveEditors">清空</button>
-        </div>
-
-        <div class="row">
-          <button :disabled="isBusy" @click="pushReceiveToInbound">将接收区写入缓冲</button>
-          <button :disabled="isBusy" @click="copyReceiveToSend">复制到发送区</button>
-        </div>
-
-        <div class="editors-grid">
-          <div>
-            <label>ASCII（可编辑）</label>
-            <textarea
-              v-model="receiveAsciiEditor"
-              class="editor ascii"
-              rows="12"
-              @input="onReceiveAsciiInput"
-              placeholder="左侧编辑 ASCII，右侧 HEX 同步"
-            />
-          </div>
-          <div>
-            <label>HEX（字节控件）</label>
-            <HexByteEditor
-              v-model="receiveBytes"
-              :max-bytes="HEX_MAX_BYTES"
-              :disabled="isBusy"
-            />
-            <p class="hint">字节数: {{ receiveBytes.length }}/{{ HEX_MAX_BYTES }}</p>
-          </div>
-        </div>
-      </article>
-    </section>
-  </main>
+    <!-- 状态栏 -->
+    <div class="statusbar">
+      <span class="status-cell">{{ connected ? '已连接' : '未连接' }}</span>
+      <span class="status-sep"></span>
+      <span class="status-cell">{{ endpoint }} {{ baudRate }},{{ dataBits }},{{ parity === 'none' ? 'N' : parity === 'odd' ? 'O' : 'E' }},{{ stopBits }}</span>
+      <span class="status-sep"></span>
+      <span class="status-cell">{{ infoText }}</span>
+      <span v-if="errorText" class="status-cell status-error">{{ errorText }}</span>
+    </div>
+  </div>
 </template>
 
 <style scoped>
 :global(body) {
   margin: 0;
-  min-height: 100vh;
-  background:
-    radial-gradient(circle at 10% 10%, #f6efe3 0%, transparent 40%),
-    radial-gradient(circle at 90% 15%, #d8f0e4 0%, transparent 35%),
-    linear-gradient(145deg, #f7fafc 0%, #e8eef6 70%);
-  color: #17202a;
-  font-family: "Noto Serif SC", "Source Han Serif SC", serif;
+  padding: 0;
+  background: #f0f0f0;
+  color: #1a1a1a;
+  font-family: "Microsoft YaHei", "Segoe UI", "Noto Sans SC", sans-serif;
+  font-size: 12px;
+  overflow: hidden;
 }
 
-.page {
-  max-width: 1260px;
-  margin: 0 auto;
-  padding: 24px 20px 36px;
-}
-
-.hero h1 {
-  margin: 0 0 8px;
-  font-size: clamp(26px, 4vw, 40px);
-}
-
-.hero p {
-  margin: 4px 0;
-}
-
-.status-row {
+.app {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 12px;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
-.chip {
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid #a0b2c6;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 13px;
+/* ---- 菜单栏 ---- */
+.menubar {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #a0a0a0;
+  padding: 0 4px;
+  flex-shrink: 0;
 }
 
-.chip.ok {
-  border-color: #2f855a;
-  color: #22543d;
+.menu-item {
+  padding: 2px 8px;
+  cursor: default;
+  user-select: none;
 }
 
-.error {
-  color: #c53030;
+.menu-item:hover {
+  background: #0060c0;
+  color: #fff;
+}
+
+/* ---- 工具栏 ---- */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 26px;
+  background: #e8e8e8;
+  border-bottom: 1px solid #a0a0a0;
+  padding: 0 4px;
+  flex-shrink: 0;
+}
+
+.toolbar-sep {
+  width: 1px;
+  height: 16px;
+  background: #a0a0a0;
+  margin: 0 4px;
+}
+
+/* ---- 主体 ---- */
+.main-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ---- 侧边栏 ---- */
+.sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  border-right: 1px solid #a0a0a0;
+  background: #f0f0f0;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.sidebar fieldset {
+  margin: 0 0 4px;
+  padding: 4px 6px 6px;
+  border: 1px solid #a0a0a0;
+}
+
+.sidebar legend {
+  font-size: 11px;
   font-weight: 600;
+  padding: 0 4px;
 }
 
-.layout {
-  margin-top: 18px;
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 14px;
-}
-
-.panel {
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(62, 92, 118, 0.25);
-  border-radius: 16px;
-  padding: 14px;
-  box-shadow: 0 12px 22px rgba(24, 39, 75, 0.08);
-}
-
-.editor-panel {
-  min-width: 0;
-}
-
-h2 {
-  margin: 0 0 10px;
-  font-size: 20px;
-}
-
-label {
+.sidebar label {
   display: block;
-  font-size: 13px;
-  margin: 8px 0 6px;
+  font-size: 11px;
+  margin: 4px 0 2px;
+  color: #333;
 }
 
-input,
-select,
-textarea {
+.sidebar input,
+.sidebar select {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #9fb0c3;
-  border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 14px;
-  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #a0a0a0;
+  border-radius: 0;
+  padding: 2px 4px;
+  font-size: 12px;
+  background: #fff;
 }
 
-.editor {
-  line-height: 1.45;
-  white-space: pre;
-}
-
-.editor.ascii {
-  font-family: "Noto Sans Mono CJK SC", "JetBrains Mono", monospace;
-}
-
-.row {
+/* ---- 内容区 ---- */
+.content {
+  flex: 1;
+  min-width: 0;
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: 8px;
-  align-items: center;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 4px;
+  gap: 4px;
 }
 
-.split {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(120px, 1fr));
-  gap: 8px;
+/* ---- 区域 (接收/发送) ---- */
+.zone {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #a0a0a0;
+  margin: 0;
+  padding: 4px 6px 6px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.zone-recv {
+  flex: 3;
+}
+
+.zone-send {
+  flex: 2;
+}
+
+.zone legend {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.zone-toolbar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+  flex-shrink: 0;
 }
 
 .editors-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 10px;
+  gap: 4px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
-button {
-  border: none;
-  border-radius: 10px;
-  padding: 8px 12px;
-  background: linear-gradient(135deg, #2458b6, #1f3f75);
-  color: #fff;
-  cursor: pointer;
-  transition: transform 120ms ease;
-}
-
-button:hover {
-  transform: translateY(-1px);
-}
-
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.list {
-  margin: 10px 0 0;
-  padding-left: 18px;
-}
-
-.list li {
-  margin: 4px 0;
+.editor-col {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-col label {
+  display: block;
+  font-size: 11px;
+  margin: 0 0 2px;
+  color: #333;
+  flex-shrink: 0;
+}
+
+.editor-col .editor {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+}
+
+.editor-col .hex-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.editor {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #a0a0a0;
+  border-radius: 0;
+  padding: 4px;
   font-size: 12px;
+  background: #fff;
+  line-height: 1.4;
+  white-space: pre;
+  overflow: auto;
+}
+
+.editor.ascii {
+  font-family: "JetBrains Mono", "Consolas", monospace;
 }
 
 .hint {
-  margin: 6px 0 0;
-  font-size: 12px;
-  color: #4a5568;
+  font-size: 11px;
+  color: #666;
+  margin-left: 6px;
+  font-weight: normal;
 }
 
-@media (max-width: 1120px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
+/* ---- 按钮（全局） ---- */
+button {
+  border: 1px solid #a0a0a0;
+  border-radius: 0;
+  padding: 2px 8px;
+  background: #e0e0e0;
+  color: #1a1a1a;
+  font-size: 12px;
+  cursor: default;
+  white-space: nowrap;
+}
 
-  .editors-grid {
-    grid-template-columns: 1fr;
-  }
+button:hover {
+  background: #d0d0d0;
+}
+
+button:active {
+  background: #c0c0c0;
+}
+
+button:disabled {
+  color: #999;
+  background: #e0e0e0;
+  cursor: not-allowed;
+}
+
+/* ---- 状态栏 ---- */
+.statusbar {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  background: #f0f0f0;
+  border-top: 1px solid #a0a0a0;
+  padding: 0 6px;
+  flex-shrink: 0;
+  font-size: 11px;
+  gap: 0;
+}
+
+.status-cell {
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status-sep {
+  width: 1px;
+  height: 14px;
+  background: #a0a0a0;
+}
+
+.status-error {
+  color: #c00;
+  font-weight: 600;
 }
 </style>
