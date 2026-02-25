@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use serde::{Deserialize, Serialize};
 use serial_core::{FlowControl, MemoryTransport, Parity, SerialOpenConfig, SerialSessionManager};
 use std::sync::Mutex;
