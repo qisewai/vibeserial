@@ -31,8 +31,8 @@ jobs:
         working-directory: apps/ui
 
       - name: Build Tauri app
-        run: npx tauri build -c src-tauri/tauri.conf.json
-        working-directory: apps/desktop
+        run: npm run tauri:build
+        working-directory: apps/ui
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
