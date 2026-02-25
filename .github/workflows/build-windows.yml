@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
@@ -30,9 +33,15 @@ jobs:
         run: npm install
         working-directory: apps/ui
 
-      - name: Build Tauri app
-        run: npm run tauri:build
+      - name: Build frontend
+        run: npm run build
         working-directory: apps/ui
+
+      - name: Build Tauri app
+        working-directory: apps/desktop
+        run: |
+          export PATH="$GITHUB_WORKSPACE/apps/ui/node_modules/.bin:$PATH"
+          tauri build -c src-tauri/tauri.conf.json
 
       - name: Upload MSI
         uses: actions/upload-artifact@v4
